@@ -30,6 +30,10 @@ send-w-telegu "$msg"
 # FILE #3 - /root/.bashrc - appended the following lines to send notification to telegram when sudo su OR sudo -i is executed
 # cat /root/.bashrc
 
+# The lines below sets a trap on DEBUG, which is executed just before an ordinary command is executed
+# The caller built-in is used to test whether the command is being typed at an interactive shell 
+# or run via something like .bashrc. The value ${BASH_COMMAND} contains the command currently being executed. 
+
 if [ -n "${BASH_VERSION}" ]; then
     trap "caller >/dev/null || \
 printf '%s\\n' \"\$(date '+%Y-%m-%dT%H:%M:%S%z')\
