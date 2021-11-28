@@ -1,0 +1,2 @@
+cat sidorkin-aws-key.pem | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ./sidorkin-aws-key.pem ec2-user@$1 'sudo cat >/home/ec2-user/temp-key'
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ./sidorkin-aws-key.pem ec2-user@$1 

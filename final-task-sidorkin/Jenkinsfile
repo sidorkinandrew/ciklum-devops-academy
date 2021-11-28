@@ -1,0 +1,91 @@
+pipeline {
+    agent any
+    environment {
+        AWS_ACCOUNT_ID="863885044054"
+        AWS_DEFAULT_REGION="eu-west-1" 
+        IMAGE_REPO_NAME="app-sidorkin"
+        IMAGE_TAG="wordpress-application-sidorkin"
+        REPOSITORY_URI = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${IMAGE_REPO_NAME}"
+        MAJOR_BUILD="1"
+        MINOR_BUILD="0${BUILD_ID}"
+        APP_TAG="${MAJOR_BUILD}.${MINOR_BUILD}"
+    }
+   
+    stages {
+        
+        stage('Checkout SCM') {
+            steps {
+                echo "Checkout SCM"
+                checkout([$class: 'GitSCM', branches: [[name: '*/main']], 
+                doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], 
+                userRemoteConfigs: [[credentialsId: 'Gitlab-Sidorkin-Login', url: '${gitlabSourceRepoHttpUrl}'
+                ]]])
+                sh "ls -latr ."
+            }//steps
+        }//stage
+  
+        // Building Docker images
+        stage('Building image') {
+            steps{
+                script {
+                  echo "Docker build the application ${IMAGE_TAG}:${APP_TAG}"
+                  //echo "JOB: ${JOB_NAME} > Docker/html5/version.txt"
+                  //echo "BUILD NUMBER: ${BUILD_NUMBER} >> Docker/html5/version.txt"
+                  //echo "GIT REVISION: >> Docker/html5/version.txt"
+                  //sh "git log -n 1 >> Docker/html5/version.txt"
+                  sh "docker build Docker -t '${IMAGE_TAG}:${APP_TAG}' -t '${IMAGE_TAG}:latest'"
+                }//script
+            }//steps
+        }//stage
+
+        // Uploading Docker images into AWS ECR
+        stage('Pushing to ECR') {
+            steps{  
+                script {
+                    withAWS(credentials:'AWS-Sidorkin'){
+                        echo "Building ${IMAGE_TAG}:${APP_TAG} and pushing to ${REPOSITORY_URI}:${APP_TAG}"
+                        sh "aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+                        sh "docker tag ${IMAGE_TAG}:${APP_TAG} ${REPOSITORY_URI}:${APP_TAG}"
+                        sh "docker tag ${REPOSITORY_URI}:${APP_TAG} ${REPOSITORY_URI}:latest"
+                        sh "docker tag ${IMAGE_TAG}:${APP_TAG} ${IMAGE_TAG}:latest"
+                        sh "docker push ${REPOSITORY_URI} --all-tags"
+                    }//withAWS${APP_TAG}
+                }//script
+            }//steps
+        }//stage
+    
+    
+        // Deploying Docker images into AWS EC2
+        stage('Deploy to Application EC2 node') {
+            steps{
+                script {
+                    echo "Pulling from ${REPOSITORY_URI}:${APP_TAG}"
+                    AWS_APP_HOST = sh (script: 'cat /var/lib/jenkins/app_hostip_private', returnStdout: true).trim()
+                    echo "Application host private IP: ${AWS_APP_HOST}"
+                    SSHCMD="ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i /var/lib/jenkins/.ssh/ec2_rsa ec2-user@$AWS_APP_HOST"
+                    withAWS(credentials:'AWS-Sidorkin'){  // init environment variables for AWS
+                        sh """echo "export AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION} && export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} && export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} && export AWS_ACCOUNT_ID=${AWS_ACCOUNT_ID} && export AWS_DEFAULT_PROFILE=default && export AWS_PROFILE=default
+        	    aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com
+        	    docker pull ${REPOSITORY_URI}:${APP_TAG}
+        	    docker tag ${REPOSITORY_URI}:${APP_TAG} ${REPOSITORY_URI}:latest
+        	    /home/ec2-user/restart_app.sh  
+        	    docker run --name ${IMAGE_REPO_NAME} -p 80:80 -p 443:80 -d ${REPOSITORY_URI}:${APP_TAG}">${WORKSPACE}/deploy.sh"""
+                    }
+                    sh """
+                        $SSHCMD "bash -s" <${WORKSPACE}/deploy.sh
+                    """
+                } // script
+            } //steps
+        } //stage
+    
+    }//stages
+
+    post {
+        always {
+            sh "docker rmi ${IMAGE_TAG}:${APP_TAG} | true"
+            sh "docker rmi ${REPOSITORY_URI}:${APP_TAG} | true"
+            sh """docker rmi \$(docker images -a | grep -i ${IMAGE_TAG} | awk -F\" \" '{ print \$3 }') -f | true"""
+            sh "rm -f ${WORKSPACE}/deploy.sh | true"
+        }
+    }
+}

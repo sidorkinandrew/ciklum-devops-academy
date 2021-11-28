@@ -1,0 +1,13 @@
+version: '3'
+services:
+    web:
+        build:
+            context: .
+            dockerfile: Dockerfile_slim
+        ports:
+            - "5000:5000"
+        environment:
+            - FLASK_APP=app
+            - DATABASE_URL=sqlite:///database.db
+        volumes:
+            - ./templates:/app/templates
